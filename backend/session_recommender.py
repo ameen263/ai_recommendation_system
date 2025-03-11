@@ -7,7 +7,6 @@ from typing import List, Dict, Any
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-
 class SessionRecommender:
     def __init__(self, ratings_file_path: str = "data/u.data", movies_file_path: str = "data/u.item"):
         """
@@ -37,7 +36,8 @@ class SessionRecommender:
                 sep="\t",
                 names=["user_id", "movie_id", "rating", "timestamp"]
             )
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit="s")
+            # Convert Unix timestamp to datetime (if not already numeric)
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", errors="coerce")
             logger.info(f"Loaded {len(df)} ratings from {self.ratings_file_path}")
             return df
         except Exception as e:
@@ -68,14 +68,14 @@ class SessionRecommender:
 
     def get_context_features(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Extract context features from a given context dictionary.
+        Extract context features from the provided context dictionary.
 
         Expected keys:
             - "timestamp": ISO formatted string (e.g., "2025-03-08T20:30:00Z")
             - "device": Device type (e.g., "mobile", "desktop")
 
         Returns:
-            dict: Extracted features (hour, day_of_week, device).
+            dict: Extracted features such as hour, day_of_week, and device.
         """
         features = {}
         try:
@@ -99,11 +99,11 @@ class SessionRecommender:
         Identify trending movies based on the number of ratings within a given time window.
 
         Args:
-            time_window_days (int): The number of past days to consider.
-            top_n (int): The number of trending movies to return.
+            time_window_days (int): Number of days in the past to consider.
+            top_n (int): Number of trending movies to return.
 
         Returns:
-            List of dictionaries with keys: movie_id, title, rating_count.
+            List[Dict[str, Any]]: Each dictionary contains keys: movie_id, title, rating_count.
         """
         if self.ratings_df.empty or self.movies_df.empty:
             logger.warning("Ratings or movies data not available.")
@@ -123,40 +123,37 @@ class SessionRecommender:
         logger.info(f"Identified {len(trending_list)} trending movies in the past {time_window_days} days.")
         return trending_list
 
-    def get_session_based_recommendations(self, context: Dict[str, Any], time_window_days: int = 30, top_n: int = 10) -> \
-    List[Dict[str, Any]]:
+    def get_session_based_recommendations(self, context: Dict[str, Any], time_window_days: int = 30, top_n: int = 10) -> List[Dict[str, Any]]:
         """
-        Generate session-based recommendations by combining trending movies with context features.
-        This method adjusts the trending score based on the current session context (e.g., time of day).
+        Generate session-based recommendations by adjusting trending movie scores using session context.
 
         Args:
-            context (dict): A dictionary containing session context (e.g., timestamp, device).
+            context (dict): Contains session context like timestamp and device.
             time_window_days (int): Time window for trending analysis.
             top_n (int): Number of recommendations to return.
 
         Returns:
-            List of movie recommendation dictionaries.
+            List[Dict[str, Any]]: List of movie recommendation dictionaries.
         """
         # Get trending movies over the specified time window
-        trending = self.get_trending_movies(time_window_days=time_window_days,
-                                            top_n=top_n * 2)  # get extra for re-ranking
+        trending = self.get_trending_movies(time_window_days=time_window_days, top_n=top_n * 2)
         if not trending:
             return []
 
-        # Extract session context features
+        # Extract session features
         features = self.get_context_features(context)
         hour = features.get("hour", 12)
 
-        # Apply a simple heuristic: boost trending score if it's evening (e.g., 18-23)
+        # Apply a boost if it's evening (e.g., 18-23)
         boost = 1.1 if 18 <= hour <= 23 else 1.0
         for movie in trending:
             movie["adjusted_score"] = movie.get("rating_count", 0) * boost
 
-        # Sort the movies by the adjusted score and return top_n
-        trending = sorted(trending, key=lambda x: x["adjusted_score"], reverse=True)
-        recommendations = trending[:top_n]
+        # Sort by adjusted score and return top_n recommendations
+        trending_sorted = sorted(trending, key=lambda x: x["adjusted_score"], reverse=True)
+        recommendations = trending_sorted[:top_n]
+        logger.info(f"Session-based recommendations generated for context: {context}")
         return recommendations
-
 
 if __name__ == "__main__":
     # Example usage:

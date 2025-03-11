@@ -1,8 +1,10 @@
+import os
+import logging
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
 from pyspark.ml.recommendation import ALS
 from pyspark.ml.evaluation import RegressionEvaluator
-from pyspark.sql.functions import col
-import logging
+import pickle
 
 # Configure logging
 logging.basicConfig(
@@ -16,56 +18,94 @@ def main():
     # Initialize Spark session
     spark = SparkSession.builder \
         .appName("DistributedTrainingALS") \
+        .config("spark.sql.warehouse.dir", "file:/tmp/spark-warehouse") \
+        .config("spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version", "2") \
         .getOrCreate()
 
     try:
-        # Define data path (assumes merged_data.csv is tab-separated with header)
-        data_path = "backend/data/merged_data.csv"
-        logger.info(f"Loading data from {data_path}...")
-        # Load data; adjust options if necessary
-        df = spark.read.option("delimiter", "\t") \
-            .option("header", "true") \
-            .csv(data_path)
+        # Derive the data file path relative to this script's directory
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        data_path = os.path.join(script_dir, "data", "merged_data.csv")
 
-        # Convert columns to appropriate data types
+        logger.info(f"Loading data from {data_path}...")
+
+        # Check if file exists
+        if not os.path.exists(data_path):
+            logger.error(f"Data file not found: {data_path}")
+            return
+
+        # Adjust 'sep' based on your CSV format (tab or comma)
+        df = spark.read.csv(
+            data_path,
+            sep="\t",
+            header=True,
+            inferSchema=False
+        )
+
+        # Convert columns to appropriate types
         df = df.withColumn("user_id", col("user_id").cast("integer")) \
             .withColumn("movie_id", col("movie_id").cast("integer")) \
             .withColumn("rating", col("rating").cast("float"))
 
-        logger.info(f"Loaded {df.count()} records from the dataset.")
-
-        # Split data into training (80%) and test (20%)
+        # Split data
         train, test = df.randomSplit([0.8, 0.2], seed=42)
-        logger.info("Data split into training and test sets.")
 
-        # Initialize ALS model for collaborative filtering
+        # ALS model setup
         als = ALS(
             userCol="user_id",
             itemCol="movie_id",
             ratingCol="rating",
             nonnegative=True,
             implicitPrefs=False,
-            coldStartStrategy="drop",  # Drop predictions for unknown users/items
-            rank=100,  # Number of latent factors; can be tuned
+            coldStartStrategy="drop",
+            rank=50,
             maxIter=10,
             regParam=0.1,
             seed=42
         )
 
-        logger.info("Training the ALS model...")
+        # Fit ALS model
         model = als.fit(train)
-        logger.info("ALS model training completed.")
 
-        # Evaluate the model using RMSE metric
+        # Evaluate with RMSE
         predictions = model.transform(test)
-        evaluator = RegressionEvaluator(metricName="rmse", labelCol="rating", predictionCol="prediction")
+        evaluator = RegressionEvaluator(
+            metricName="rmse",
+            labelCol="rating",
+            predictionCol="prediction"
+        )
         rmse = evaluator.evaluate(predictions)
-        logger.info(f"Distributed ALS model RMSE on test set: {rmse:.4f}")
+        logger.info(f"Distributed ALS model RMSE: {rmse:.4f}")
 
-        # Save the trained model
-        model_save_path = "models/als_model"
-        logger.info(f"Saving model to {model_save_path}...")
-        model.save(model_save_path)
+        # Directory creation
+        model_save_path = os.path.join(script_dir, "models", "als_model")
+        os.makedirs(model_save_path, exist_ok=True)
+
+        # Corrected model_params (Fixed Getter Calls)
+        model_params = {
+            "rank": model.rank,
+            "maxIter": als.getMaxIter(),
+            "regParam": als.getRegParam(),
+            "userCol": als.getUserCol(),
+            "itemCol": als.getItemCol(),
+            "ratingCol": als.getRatingCol(),
+            "nonnegative": als.getNonnegative(),
+            "implicitPrefs": als.getImplicitPrefs(),
+            "coldStartStrategy": als.getColdStartStrategy(),
+            "rmse": rmse
+        }
+
+        # Saving user/item factors and params
+        user_factors_path = os.path.join(model_save_path, "user_factors")
+        item_factors_path = os.path.join(model_save_path, "item_factors")
+
+        model.userFactors.write.mode("overwrite").format("parquet").save(f"file:{user_factors_path}")
+        model.itemFactors.write.mode("overwrite").format("parquet").save(f"file:{item_factors_path}")
+
+        params_path = os.path.join(model_save_path, "model_params.pkl")
+        with open(params_path, 'wb') as f:
+            pickle.dump(model_params, f)
+
         logger.info("Model saved successfully.")
 
     except Exception as e:

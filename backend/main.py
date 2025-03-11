@@ -1,52 +1,43 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from api import app as recommendation_app  # Recommendation API
-from auth_api import app as auth_app  # Authentication API
+from flask import Flask, jsonify
+from api import recommendation_app  # Flask Blueprint
+from auth_api import auth_app  # Flask Blueprint
+from flask_cors import CORS  # Flask-CORS
 
 # Constants
 APP_TITLE = "Unified AI Movie Recommendation API"
 APP_VERSION = "1.0"
-ALLOWED_ORIGINS = ["*"]  # Adjust for production
-ALLOWED_CREDENTIALS = True
-ALLOWED_METHODS = ["*"]
-ALLOWED_HEADERS = ["*"]
 
-# Initialize the app
-app = FastAPI(title=APP_TITLE, version=APP_VERSION)
+# Initialize Flask app instance
+app = Flask(__name__)
+app.config["APP_TITLE"] = APP_TITLE
+app.config["APP_VERSION"] = APP_VERSION
 
+# Middleware configuration for CORS
+CORS(app, supports_credentials=True)
 
-# Middleware configuration
-def add_cors_middleware(application: FastAPI):
-    application.add_middleware(
-        CORSMiddleware,
-        allow_origins=ALLOWED_ORIGINS,
-        allow_credentials=ALLOWED_CREDENTIALS,
-        allow_methods=ALLOWED_METHODS,
-        allow_headers=ALLOWED_HEADERS,
-    )
+# Register Flask Blueprints from sub-applications
+app.register_blueprint(recommendation_app, url_prefix="/api")
+app.register_blueprint(auth_app, url_prefix="/auth")
+
+# Helper configuration flag for startup event
+app.config["API_STARTED"] = False
 
 
-# Apply CORS middleware
-add_cors_middleware(app)
+@app.before_request
+def startup_event():
+    if not app.config["API_STARTED"]:
+        print("API has started successfully.")
+        app.config["API_STARTED"] = True
 
-# Mount sub-applications
-app.mount("/api", recommendation_app)
-app.mount("/auth", auth_app)
 
-
-# Define root endpoint
-@app.get("/")
+# Root endpoint providing basic API guidance
+@app.route("/")
 def get_root_endpoint():
-    """
-    Root endpoint providing basic API guidance.
-    """
-    return {
+    return jsonify({
         "message": "Welcome to the Unified API. Use /auth for authentication and /api for recommendations."
-    }
+    })
 
 
-# Entry point
+# Entry-point
 if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    app.run(host="0.0.0.0", port=8000, debug=True)

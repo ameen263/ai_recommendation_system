@@ -8,21 +8,20 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 DATABASE_PATH = Path("privacy.db")
 
-
 class PrivacyManager:
     def __init__(self, db_path=DATABASE_PATH):
         """
-        Initialize the PrivacyManager, connecting to the SQLite database and creating
-        the user_consent table if it does not exist.
+        Initialize the PrivacyManager by connecting to the SQLite database
+        and ensuring that the user_consent table exists.
         """
         self.db_path = db_path
-        self.conn = sqlite3.connect(self.db_path)
+        self.conn = sqlite3.connect(str(self.db_path))
         self.conn.row_factory = sqlite3.Row
         self._create_tables()
 
     def _create_tables(self):
         """
-        Create necessary tables for privacy management.
+        Create the necessary table for privacy management.
         """
         try:
             with self.conn:
@@ -38,13 +37,13 @@ class PrivacyManager:
             logger.error(f"Error creating tables: {e}")
             raise
 
-    def record_consent(self, user_id, consent):
+    def record_consent(self, user_id: str, consent: bool):
         """
         Record or update a user's consent status.
 
         Args:
             user_id (str): The unique identifier for the user.
-            consent (bool): True if user gives consent, False otherwise.
+            consent (bool): True if consent is given; False otherwise.
         """
         timestamp = datetime.utcnow().isoformat()
         try:
@@ -61,7 +60,7 @@ class PrivacyManager:
             logger.error(f"Error recording consent for user {user_id}: {e}")
             raise
 
-    def get_consent(self, user_id):
+    def get_consent(self, user_id: str):
         """
         Retrieve a user's consent status.
 
@@ -69,7 +68,7 @@ class PrivacyManager:
             user_id (str): The unique identifier for the user.
 
         Returns:
-            bool or None: True/False if consent record exists; None if not found.
+            bool or None: Returns True/False if a record exists; None if not found.
         """
         try:
             cur = self.conn.cursor()
@@ -86,21 +85,18 @@ class PrivacyManager:
             logger.error(f"Error retrieving consent for user {user_id}: {e}")
             raise
 
-    def remove_user_data(self, user_id):
+    def remove_user_data(self, user_id: str):
         """
-        Remove a user's privacy-sensitive data.
-        This method should be integrated with your system's data deletion workflow.
+        Remove a user's privacy-sensitive data. This function simulates the deletion process.
+        In a full implementation, it should remove user data from all related data stores.
 
         Args:
             user_id (str): The unique identifier for the user.
-
-        Note: In a full implementation, this function would delete user data from
-        all data stores (ratings, interactions, etc.). Here, we simulate the process.
         """
         try:
             with self.conn:
                 self.conn.execute("DELETE FROM user_consent WHERE user_id = ?", (user_id,))
-            # TODO: Add deletion logic for other data (e.g., ratings, user profiles) as needed.
+            # TODO: Integrate deletion of other privacy-sensitive data if required.
             logger.info(f"All privacy-related data for user {user_id} has been removed.")
         except Exception as e:
             logger.error(f"Error removing data for user {user_id}: {e}")
@@ -113,16 +109,15 @@ class PrivacyManager:
         self.conn.close()
         logger.info("Database connection closed.")
 
-
 if __name__ == "__main__":
-    # Example usage
+    # Example usage:
     pm = PrivacyManager()
 
     # Record consent for a user
     user_id = "user_123"
     pm.record_consent(user_id, consent=True)
 
-    # Retrieve the consent
+    # Retrieve the consent status
     consent = pm.get_consent(user_id)
     print(f"Consent for {user_id}: {consent}")
 

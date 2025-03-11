@@ -1,19 +1,85 @@
 import numpy as np
-from surprise import accuracy, Dataset, Reader, SVD
-from surprise.model_selection import train_test_split
-import pickle
-from typing import Dict, List, Tuple, Optional
 import pandas as pd
-from collections import defaultdict
+import pickle
 import logging
+import math
 from pathlib import Path
+from surprise import accuracy, Dataset, Reader
+from surprise.model_selection import train_test_split
+from collections import defaultdict
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def precision_recall_at_k(predictions, k=10, threshold=3.5):
+    """
+    Compute Precision@K and Recall@K for the given predictions.
+
+    Args:
+        predictions (list): List of Surprise prediction objects.
+        k (int): Number of top recommendations to consider.
+        threshold (float): Rating threshold to consider an item as relevant.
+
+    Returns:
+        (avg_precision, avg_recall): Tuple of average precision and recall over all users.
+    """
+    user_est_true = defaultdict(list)
+    for pred in predictions:
+        user_est_true[pred.uid].append((pred.est, pred.r_ui))
+
+    precisions = dict()
+    recalls = dict()
+    for uid, user_ratings in user_est_true.items():
+        # Sort user ratings by estimated value in descending order.
+        user_ratings.sort(key=lambda x: x[0], reverse=True)
+        # Number of relevant items for this user.
+        n_rel = sum((true_r >= threshold) for (_, true_r) in user_ratings)
+        # Number of recommended items in top-k that are relevant.
+        n_rec_k = sum((true_r >= threshold) for (_, true_r) in user_ratings[:k])
+        precisions[uid] = n_rec_k / k
+        recalls[uid] = n_rec_k / n_rel if n_rel != 0 else 0
+    avg_precision = np.mean(list(precisions.values()))
+    avg_recall = np.mean(list(recalls.values()))
+    return avg_precision, avg_recall
+
+
+def ndcg_at_k(predictions, k=10, threshold=3.5):
+    """
+    Compute Normalized Discounted Cumulative Gain (NDCG) at K.
+
+    Args:
+        predictions (list): List of Surprise prediction objects.
+        k (int): Number of top recommendations to consider.
+        threshold (float): Relevance threshold.
+
+    Returns:
+        avg_ndcg: Average NDCG over all users.
+    """
+    user_est_true = defaultdict(list)
+    for pred in predictions:
+        # Define relevance: 1 if true rating is above threshold, else 0.
+        rel = 1 if pred.r_ui >= threshold else 0
+        user_est_true[pred.uid].append((pred.est, rel))
+
+    ndcgs = dict()
+    for uid, user_ratings in user_est_true.items():
+        # Sort predictions by estimated value.
+        user_ratings.sort(key=lambda x: x[0], reverse=True)
+        dcg = 0.0
+        for i, (_, rel) in enumerate(user_ratings[:k]):
+            dcg += (2 ** rel - 1) / math.log2(i + 2)
+        # Compute Ideal DCG
+        ideal = sorted([rel for (_, rel) in user_ratings], reverse=True)[:k]
+        idcg = 0.0
+        for i, rel in enumerate(ideal):
+            idcg += (2 ** rel - 1) / math.log2(i + 2)
+        ndcgs[uid] = dcg / idcg if idcg > 0 else 0.0
+    avg_ndcg = np.mean(list(ndcgs.values()))
+    return avg_ndcg
 
 
 class RecommenderEvaluator:
@@ -24,52 +90,40 @@ class RecommenderEvaluator:
         Initialize the evaluator with data and model paths.
 
         Args:
-            data_path (str): Path to ratings data file.
-            model_path (str): Path to saved model file.
+            data_path (str): Path to the merged ratings data file.
+            model_path (str): Path to the pre-trained model file.
         """
         self.data_path = Path(data_path)
         self.model_path = Path(model_path)
-        self.ratings_df: Optional[pd.DataFrame] = None
+        self.ratings_df = None
         self.model = None
-        self.reader = Reader(rating_scale=(1, 5))
+        self.reader = Reader(rating_scale=(1, 5))  # Ratings from 1 to 5
 
     def load_data(self) -> bool:
         """
-        Load the ratings dataset from a tab-separated file with columns:
-        user_id, movie_id, rating, timestamp.
-
-        Returns:
-            bool: True if data loaded successfully, False otherwise.
-
-        Raises:
-            FileNotFoundError if the data file does not exist.
+        Load the merged data from CSV.
+        Expected format: Tab-separated file with columns: user_id, movie_id, rating, timestamp.
         """
         try:
             if not self.data_path.exists():
                 raise FileNotFoundError(f"Data file not found: {self.data_path}")
-            self.ratings_df = pd.read_csv(
-                self.data_path,
-                sep="\t",
-                names=["user_id", "movie_id", "rating", "timestamp"]
-            )
-            logger.info(f"Successfully loaded {len(self.ratings_df)} ratings")
+            df = pd.read_csv(self.data_path, sep="\t", header=0)
+            df = df[["user_id", "movie_id", "rating", "timestamp"]]
+            df["rating"] = pd.to_numeric(df["rating"], errors="coerce")
+            df.dropna(subset=["rating"], inplace=True)
+            df["user_id"] = pd.to_numeric(df["user_id"], errors="coerce")
+            df["movie_id"] = pd.to_numeric(df["movie_id"], errors="coerce")
+            df.dropna(subset=["user_id", "movie_id"], inplace=True)
+            self.ratings_df = df
+            logger.info(f"Successfully loaded {len(self.ratings_df)} ratings from {self.data_path}")
             return True
-        except FileNotFoundError as e:
-            logger.error(f"Data loading failed: {e}")
-            raise
         except Exception as e:
-            logger.error(f"Unexpected error loading data: {e}")
+            logger.error(f"Data loading failed: {e}")
             raise
 
     def load_model(self) -> bool:
         """
         Load the pre-trained collaborative filtering model from disk.
-
-        Returns:
-            bool: True if model loaded successfully, False otherwise.
-
-        Raises:
-            FileNotFoundError if the model file does not exist.
         """
         try:
             if not self.model_path.exists():
@@ -78,258 +132,39 @@ class RecommenderEvaluator:
                 self.model = pickle.load(f)
             logger.info("Model loaded successfully")
             return True
-        except FileNotFoundError as e:
+        except Exception as e:
             logger.error(f"Model loading failed: {e}")
             raise
-        except Exception as e:
-            logger.error(f"Unexpected error loading model: {e}")
-            raise
 
-    def compute_rmse(self, predictions: List[Tuple]) -> float:
+    def evaluate_model(self) -> dict:
         """
-        Compute Root Mean Square Error (RMSE) from the predictions.
-
-        Args:
-            predictions (List[Tuple]): Predictions generated by the model.
+        Evaluate the recommendation model using RMSE, Precision@K, Recall@K, and NDCG.
 
         Returns:
-            float: RMSE score.
+            dict: Dictionary containing evaluation metrics.
         """
         try:
-            if not predictions:
-                raise ValueError("Empty predictions provided for RMSE computation")
-            rmse = accuracy.rmse(predictions, verbose=False)
-            return round(rmse, 4)
-        except Exception as e:
-            logger.error(f"Error computing RMSE: {e}")
-            raise
-
-    def compute_precision_recall(
-            self,
-            predictions: List[Tuple],
-            k: int = 10,
-            threshold: float = 3.5
-    ) -> Tuple[float, float]:
-        """
-        Compute Precision@K and Recall@K for the predictions.
-
-        Args:
-            predictions (List[Tuple]): List of prediction tuples.
-            k (int): Number of recommendations to consider.
-            threshold (float): Rating threshold to count an item as relevant.
-
-        Returns:
-            Tuple[float, float]: Mean precision and recall scores.
-        """
-        try:
-            if not predictions:
-                raise ValueError("No predictions provided")
-            if k <= 0:
-                raise ValueError("k must be positive")
-
-            # Group predictions by user
-            user_est_true = defaultdict(list)
-            for uid, _, true_r, est, _ in predictions:
-                user_est_true[uid].append((est, true_r))
-
-            precisions = []
-            recalls = []
-            for user_ratings in user_est_true.values():
-                user_ratings.sort(key=lambda x: x[0], reverse=True)
-                top_k = user_ratings[:k]
-                n_rel = sum(1 for (_, true_r) in top_k if true_r >= threshold)
-                n_rel_total = sum(1 for (_, true_r) in user_ratings if true_r >= threshold)
-                precision = n_rel / k
-                recall = n_rel / n_rel_total if n_rel_total > 0 else 0
-                precisions.append(precision)
-                recalls.append(recall)
-
-            mean_precision = round(np.mean(precisions), 4)
-            mean_recall = round(np.mean(recalls), 4)
-            return mean_precision, mean_recall
-        except Exception as e:
-            logger.error(f"Error computing precision/recall: {e}")
-            raise
-
-    def compute_ndcg(self, predictions: List[Tuple], k: int = 10) -> float:
-        """
-        Compute Normalized Discounted Cumulative Gain (NDCG@K) for the predictions.
-
-        Args:
-            predictions (List[Tuple]): List of prediction tuples.
-            k (int): Number of recommendations to consider.
-
-        Returns:
-            float: NDCG@K score.
-        """
-        try:
-            if not predictions:
-                raise ValueError("No predictions provided")
-            if k <= 0:
-                raise ValueError("k must be positive")
-
-            ndcg_scores = []
-            user_est_true = defaultdict(list)
-            for uid, _, true_r, est, _ in predictions:
-                user_est_true[uid].append((est, true_r))
-
-            for user_ratings in user_est_true.values():
-                user_ratings.sort(key=lambda x: x[0], reverse=True)
-                top_k = user_ratings[:k]
-                dcg = sum((2 ** true_r - 1) / np.log2(idx + 2) for idx, (_, true_r) in enumerate(top_k))
-                ideal_ratings = sorted((true_r for (_, true_r) in user_ratings), reverse=True)[:k]
-                idcg = sum((2 ** true_r - 1) / np.log2(idx + 2) for idx, true_r in enumerate(ideal_ratings))
-                ndcg = dcg / idcg if idcg > 0 else 0
-                ndcg_scores.append(ndcg)
-
-            return round(np.mean(ndcg_scores), 4)
-        except Exception as e:
-            logger.error(f"Error computing NDCG: {e}")
-            raise
-
-    def compute_novelty(self, predictions: List[Tuple], k: int = 10) -> float:
-        """
-        Compute Novelty@K for the recommendations.
-        Novelty is defined as the average -log2(probability) of recommended items,
-        where probability is based on item popularity in the ratings data.
-
-        Args:
-            predictions (List[Tuple]): List of prediction tuples.
-            k (int): Number of recommendations to consider per user.
-
-        Returns:
-            float: Average Novelty score.
-        """
-        try:
-            if self.ratings_df is None or self.ratings_df.empty:
-                raise ValueError("Ratings data not available for computing novelty")
-            popularity = self.ratings_df['movie_id'].value_counts()
-            total_ratings = len(self.ratings_df)
-            popularity_prob = popularity / total_ratings
-
-            user_predictions = defaultdict(list)
-            for uid, iid, true_r, est, _ in predictions:
-                user_predictions[uid].append((iid, est, true_r))
-
-            novelty_scores = []
-            for _, recs in user_predictions.items():
-                recs_sorted = sorted(recs, key=lambda x: x[1], reverse=True)[:k]
-                user_novelty = []
-                for iid, est, true_r in recs_sorted:
-                    prob = popularity_prob.get(iid, 0.001)  # small default probability if missing
-                    user_novelty.append(-np.log2(prob))
-                if user_novelty:
-                    novelty_scores.append(np.mean(user_novelty))
-            return round(np.mean(novelty_scores), 4) if novelty_scores else 0.0
-        except Exception as e:
-            logger.error(f"Error computing novelty: {e}")
-            raise
-
-    def compute_serendipity(self, predictions: List[Tuple], k: int = 10, popular_percentile: float = 0.8) -> float:
-        """
-        Compute Serendipity@K for the recommendations.
-        Serendipity is measured as the fraction of top-K recommended items that are not among the most popular.
-
-        Args:
-            predictions (List[Tuple]): List of prediction tuples.
-            k (int): Number of recommendations to consider per user.
-            popular_percentile (float): Percentile threshold defining popular items.
-
-        Returns:
-            float: Average serendipity score.
-        """
-        try:
-            if self.ratings_df is None or self.ratings_df.empty:
-                raise ValueError("Ratings data not available for computing serendipity")
-            popularity = self.ratings_df['movie_id'].value_counts()
-            threshold = popularity.quantile(popular_percentile)
-            popular_items = set(popularity[popularity >= threshold].index)
-
-            user_predictions = defaultdict(list)
-            for uid, iid, true_r, est, _ in predictions:
-                user_predictions[uid].append((iid, est, true_r))
-
-            serendipity_scores = []
-            for _, recs in user_predictions.items():
-                recs_sorted = sorted(recs, key=lambda x: x[1], reverse=True)[:k]
-                serendipitous_count = sum(1 for (iid, est, true_r) in recs_sorted if iid not in popular_items)
-                serendipity_scores.append(serendipitous_count / k)
-            return round(np.mean(serendipity_scores), 4) if serendipity_scores else 0.0
-        except Exception as e:
-            logger.error(f"Error computing serendipity: {e}")
-            raise
-
-    def compute_trust(self, predictions: List[Tuple], k: int = 10) -> float:
-        """
-        Compute a trust metric based on prediction accuracy.
-        Trust is defined as 1 - (MAE / rating_range) where a lower error results in higher trust.
-
-        Args:
-            predictions (List[Tuple]): List of prediction tuples.
-            k (int): Not used in calculation; maintained for interface consistency.
-
-        Returns:
-            float: Trust score between 0 and 1.
-        """
-        try:
-            errors = [abs(true_r - est) for (_, _, true_r, est, _) in predictions]
-            if not errors:
-                return 0.0
-            mae = np.mean(errors)
-            rating_range = 5 - 1  # Assuming ratings between 1 and 5
-            trust = max(0, 1 - mae / rating_range)
-            return round(trust, 4)
-        except Exception as e:
-            logger.error(f"Error computing trust: {e}")
-            raise
-
-    def evaluate_model(self) -> Dict[str, float]:
-        """
-        Evaluate the recommendation model using multiple metrics.
-
-        Returns:
-            Dict[str, float]: Dictionary containing evaluation metrics.
-        """
-        try:
-            # Load data and model; propagate exceptions if issues occur.
             self.load_data()
             self.load_model()
-
-            # Prepare the data for the Surprise library.
-            data = Dataset.load_from_df(
-                self.ratings_df[['user_id', 'movie_id', 'rating']],
-                self.reader
-            )
-
-            # Split the data into training and testing sets.
+            data = Dataset.load_from_df(self.ratings_df[["user_id", "movie_id", "rating"]], self.reader)
             trainset, testset = train_test_split(data, test_size=0.2, random_state=42)
-
-            # Generate predictions using the loaded model.
             predictions = self.model.test(testset)
             if not predictions:
-                raise ValueError("No predictions generated during evaluation")
+                raise ValueError("No predictions generated during evaluation.")
 
-            # Compute various evaluation metrics.
-            rmse = self.compute_rmse(predictions)
-            precision, recall = self.compute_precision_recall(predictions, k=10)
-            ndcg = self.compute_ndcg(predictions, k=10)
-            serendipity = self.compute_serendipity(predictions, k=10)
-            novelty = self.compute_novelty(predictions, k=10)
-            trust = self.compute_trust(predictions, k=10)
+            # Compute RMSE using Surprise's accuracy module.
+            rmse = accuracy.rmse(predictions, verbose=False)
+            # Compute additional metrics.
+            precision, recall = precision_recall_at_k(predictions, k=10, threshold=3.5)
+            ndcg = ndcg_at_k(predictions, k=10, threshold=3.5)
 
             metrics = {
-                "RMSE": rmse,
-                "Precision@10": precision,
-                "Recall@10": recall,
-                "NDCG@10": ndcg,
-                "Serendipity@10": serendipity,
-                "Novelty@10": novelty,
-                "Trust": trust
+                "RMSE": round(rmse, 4),
+                "Precision@K": round(precision, 4),
+                "Recall@K": round(recall, 4),
+                "NDCG": round(ndcg, 4)
             }
-
-            for metric, value in metrics.items():
-                logger.info(f"{metric}: {value}")
-
+            logger.info(f"Evaluation metrics: {metrics}")
             return metrics
         except Exception as e:
             logger.error(f"Error in model evaluation: {e}")
@@ -337,11 +172,12 @@ class RecommenderEvaluator:
 
 
 if __name__ == "__main__":
+    evaluator = RecommenderEvaluator(
+        data_path="data/merged_data.csv",
+        model_path="models/svd_model.pkl"
+    )
     try:
-        evaluator = RecommenderEvaluator()
-        metrics = evaluator.evaluate_model()
-        print("\nEvaluation Results:")
-        for metric, value in metrics.items():
-            print(f"{metric}: {value}")
-    except Exception as e:
-        print("Evaluation failed. Check logs for details.")
+        results = evaluator.evaluate_model()
+        print("Evaluation Results:", results)
+    except Exception as err:
+        print(f"Evaluation failed: {err}")
