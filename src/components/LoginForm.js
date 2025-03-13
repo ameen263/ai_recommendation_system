@@ -1,12 +1,11 @@
 import React, { useState } from 'react';
 import { Mail, Lock, Eye, EyeOff, LogIn, AlertCircle } from 'lucide-react';
-import {
-  Card,
+import Card, {
   CardContent,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+} from './ui/Card';
+import Alert,{ AlertDescription } from './ui/alert';
 import { useNavigate } from 'react-router-dom';
 
 const LoginForm = ({ onLoginSuccess }) => {

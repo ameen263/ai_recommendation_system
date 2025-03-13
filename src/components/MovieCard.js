@@ -1,8 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { Star, Info, Heart } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import Card, {
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from './ui/Card';
+import Alert,{ AlertDescription } from './ui/alert';
 
 // Stub function for favoriting a movie
 // Replace this with your actual API call to favorite/unfavorite a movie.

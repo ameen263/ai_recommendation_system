@@ -36,16 +36,15 @@ def precompute_explanations(pairs, detail_level, output_path: Path):
         detail_level (str): "simple" or "detailed" explanation level.
         output_path (Path): Path to save the precomputed explanations JSON.
     """
-    # Initialize the recommendation explainer
-    explainer = RecommendationExplainer()
+    # Initialize the recommendation explainer (advanced set to True for richer explanations)
+    explainer = RecommendationExplainer(advanced=True)
     explanations = {}
 
     for pair in pairs:
         user_id = pair['user_id']
         movie_id = pair['movie_id']
         try:
-            # Generate explanation using the unified method
-            explanation = explainer.explain_recommendation([user_id], movie_id, detail_level=detail_level)
+            explanation = explainer.explain_recommendation(user_id, movie_id, detail_level=detail_level)
             key = f"user_{user_id}_movie_{movie_id}"
             explanations[key] = explanation
             logger.info(f"Precomputed explanation for User {user_id}, Movie {movie_id}")
@@ -60,3 +59,43 @@ def precompute_explanations(pairs, detail_level, output_path: Path):
         logger.info(f"Precomputed explanations saved to {output_path}")
     except Exception as e:
         logger.exception(f"Error saving explanations to file: {e}")
+        raise
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Precompute explanations for a list of user-movie pairs using the RecommendationExplainer."
+    )
+    parser.add_argument(
+        "--input", type=str, default="",
+        help="Path to CSV file containing user-movie pairs (columns: user_id, movie_id). If not provided, a default list will be used."
+    )
+    parser.add_argument(
+        "--output", type=str, default="precomputed_explanations.json",
+        help="Output JSON file path to save precomputed explanations."
+    )
+    parser.add_argument(
+        "--detail_level", type=str, default="simple", choices=["simple", "detailed"],
+        help="Explanation detail level: 'simple' or 'detailed'."
+    )
+    args = parser.parse_args()
+
+    # Load user-movie pairs from input file or use default sample data
+    if args.input:
+        input_path = Path(args.input)
+        pairs = load_user_movie_pairs(input_path)
+    else:
+        # Default sample pairs if no input file is provided
+        logger.info("No input file provided. Using default sample user-movie pairs.")
+        pairs = [
+            {"user_id": 1, "movie_id": 1},
+            {"user_id": 1, "movie_id": 2},
+            {"user_id": 2, "movie_id": 1}
+        ]
+
+    output_path = Path(args.output)
+    precompute_explanations(pairs, args.detail_level, output_path)
+
+
+if __name__ == "__main__":
+    main()

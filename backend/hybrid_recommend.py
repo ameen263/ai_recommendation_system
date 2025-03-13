@@ -1,11 +1,14 @@
 import pandas as pd
 import numpy as np
-from surprise import SVD
+from surprise import SVD, Dataset, Reader
 import pickle
 import logging
 from pathlib import Path
 from datetime import datetime
 from content_filtering import ContentBasedRecommender
+
+# Optionally, import a fairness re-ranker if implemented separately:
+# from fairness_re_ranker import re_rank_fair
 
 # Set up logging
 logging.basicConfig(
@@ -38,7 +41,6 @@ class HybridRecommender:
     def load_ratings(self) -> pd.DataFrame:
         """
         Load the ratings dataset.
-
         Returns:
             pd.DataFrame: DataFrame containing ratings data.
         """
@@ -50,6 +52,7 @@ class HybridRecommender:
                 sep="\t",
                 names=["user_id", "movie_id", "rating", "timestamp"]
             )
+            # Convert Unix timestamp to datetime
             ratings["timestamp"] = pd.to_datetime(ratings["timestamp"], unit="s", errors="coerce")
             logger.info(f"Successfully loaded {len(ratings)} ratings")
             return ratings
@@ -60,7 +63,6 @@ class HybridRecommender:
     def load_movies(self) -> pd.DataFrame:
         """
         Load the movies dataset.
-
         Returns:
             pd.DataFrame: DataFrame containing the movies.
         """
@@ -84,7 +86,6 @@ class HybridRecommender:
     def load_model(self) -> SVD:
         """
         Load the trained SVD model.
-
         Returns:
             SVD: The trained SVD model or None if not available.
         """
@@ -110,10 +111,11 @@ class HybridRecommender:
         if self.ratings is None or self.movies is None:
             raise RuntimeError("Failed to load ratings or movies data")
 
+        # Pre-train SVD if necessary (omitted here; assume model is pre-trained)
+
     def get_cf_recommendations(self, user_id: int, n: int = 10) -> list:
         """
         Get collaborative filtering recommendations for a user.
-
         Returns:
             List of tuples: (movie_id, predicted_cf_score)
         """
@@ -135,7 +137,6 @@ class HybridRecommender:
     def apply_temporal_boost(self, recommendations: list) -> list:
         """
         Apply a temporal boost to recommendations based on movie release recency.
-
         Returns:
             List of tuples: (movie_id, boosted_score)
         """
@@ -146,7 +147,7 @@ class HybridRecommender:
             boost = 1.0
             if movie and "release_date" in movie and movie["release_date"]:
                 try:
-                    # Assuming release_date ends with the year, e.g., "1995"
+                    # Assuming release_date is in a format ending with the year
                     release_year = int(movie["release_date"][-4:])
                     if current_year - release_year <= 5:
                         boost = 1.1  # Boost factor for recent movies
@@ -158,25 +159,27 @@ class HybridRecommender:
     def combine_with_content(self, recommendations: list) -> list:
         """
         Combine CF scores with content-based similarity.
-
         Returns:
             List of tuples: (movie_id, combined_score)
         """
         combined = []
         for movie_id, boosted_score in recommendations:
+            # Retrieve content-based similarity for the movie.
+            # Here, we use the similarity score from content recommender for a candidate movie.
             content_score = 0
             similar_movies = self.content_recommender.get_similar_movies(movie_id, top_n=1)
             if similar_movies:
                 content_score = similar_movies[0].get("similarity_score", 0)
+            # Combine scores using a weighted average (e.g., 60% CF and 40% content)
             combined_score = 0.6 * boosted_score + 0.4 * content_score
             combined.append((movie_id, combined_score))
+        # Sort combined recommendations
         combined.sort(key=lambda x: x[1], reverse=True)
         return combined
 
     def diversity_rerank(self, recommendations: list) -> list:
         """
         Re-rank recommendations to promote diversity.
-
         Returns:
             List of tuples: (movie_id, title, adjusted_score)
         """
@@ -191,7 +194,7 @@ class HybridRecommender:
             penalty = 1.0
             for genre in genre_list:
                 count = genre_count.get(genre, 0)
-                penalty *= 1 / (1 + count)
+                penalty *= 1 / (1 + count)  # Higher count reduces score
                 genre_count[genre] = count + 1
             adjusted_score = score * penalty
             final_recs.append((movie_id, movie["title"], adjusted_score))
@@ -201,16 +204,20 @@ class HybridRecommender:
     def apply_rl_feedback(self, user_id: int, recommendations: list) -> list:
         """
         Adjust recommendations using reinforcement learning feedback.
-
+        This stub function calls the RL agent's adjust_recommendations.
         Returns:
             List of tuples: (movie_id, title, adjusted_score)
         """
         try:
             from rl_agent import RLAgent
-            rl_agent = RLAgent()  # In production, consider reusing a persistent RL agent instance.
+            rl_agent = RLAgent()  # Initialize RL agent; in practice, load a persistent agent per user.
+            # Here, recommendations is a list of tuples: (movie_id, title, score)
+            # For simplicity, extract (movie_id, score) and simulate feedback (could be dynamic in production)
             recs = [(movie_id, score) for movie_id, _, score in recommendations]
-            feedback = {movie_id: 0 for movie_id, _ in recs}  # Simulated neutral feedback
+            # Simulated feedback: assume 0 feedback for now; in production, use actual user feedback.
+            feedback = {movie_id: 0 for movie_id, _ in recs}
             updated = rl_agent.adjust_recommendations(user_id, recs, feedback)
+            # Reconstruct with movie titles from the original list
             updated_with_title = []
             for movie_id, adj_score in updated:
                 movie = self.content_recommender.get_movie_by_id(movie_id)
@@ -225,44 +232,36 @@ class HybridRecommender:
         """
         Generate hybrid recommendations by combining CF and content-based insights,
         applying temporal boosting, diversity re-ranking, and RL feedback.
-
         Returns:
-            List of dictionaries with keys: item_id, title, and score.
+            List of tuples: (movie_id, title, final_score)
         """
-        # Adjust cold-start: if user has fewer than 2 ratings, use fallback
+        # Handle cold-start: if user has few ratings, fallback to trending movies.
         user_ratings_count = self.ratings[self.ratings["user_id"] == user_id].shape[
             0] if self.ratings is not None else 0
-        if user_ratings_count < 2:
-            logger.info(f"User {user_id} identified as cold-start; using trending fallback recommendations.")
+        if user_ratings_count < 5:
+            logger.info(f"User {user_id} identified as cold-start; using trending recommendations.")
             trending = self.content_recommender.get_similar_movies(
                 movie_id=self.movies.iloc[0]["movie_id"], top_n=top_n
             )
-            return [{
-                "item_id": rec.get("movie_id"),
-                "title": rec.get("title", "Unknown"),
-                "score": rec.get("similarity_score", 0)
-            } for rec in trending]
+            return [(rec["movie_id"], rec["title"], rec.get("similarity_score", 0)) for rec in trending]
 
-        # Step 1: Get CF recommendations (extra candidates)
+        # Step 1: Get CF recommendations (retrieve extra candidates for re-ranking)
         cf_recs = self.get_cf_recommendations(user_id, n=top_n)
+
         # Step 2: Apply temporal boost
         boosted_recs = self.apply_temporal_boost(cf_recs)
-        # Step 3: Combine CF and content-based similarity
+
+        # Step 3: Combine CF and content-based scores
         combined_recs = self.combine_with_content(boosted_recs)
-        # Step 4: Diversity re-ranking
+
+        # Step 4: Apply diversity re-ranking (could also use a dedicated fairness re-ranker)
         diversity_recs = self.diversity_rerank(combined_recs)
-        # Step 5: RL feedback adjustment
+
+        # Step 5: Optionally, apply RL feedback to adjust the recommendations further
         final_recs = self.apply_rl_feedback(user_id, diversity_recs)
-        # Select top_n recommendations and format output
-        final_recs = final_recs[:top_n]
-        output = []
-        for movie_id, title, score in final_recs:
-            output.append({
-                "item_id": movie_id,
-                "title": title,
-                "score": round(score, 2)
-            })
-        return output
+
+        # Return top-N recommendations
+        return final_recs[:top_n]
 
 
 # Public function to get recommendations
@@ -276,6 +275,6 @@ def get_recommendations(user_id: int, top_n: int = 10) -> list:
 
 
 if __name__ == "__main__":
-    recs = get_recommendations(1, top_n=10)
-    for rec in recs:
-        print(f"Movie ID: {rec['item_id']}, Title: {rec['title']}, Score: {rec['score']:.2f}")
+    recommendations = get_recommendations(1, top_n=10)
+    for rec in recommendations:
+        print(f"Movie ID: {rec[0]}, Title: {rec[1]}, Score: {rec[2]:.4f}")

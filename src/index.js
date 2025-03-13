@@ -1,7 +1,7 @@
 // frontend/src/App.js
 import React, { useState, useEffect } from 'react';
 import { Star } from 'lucide-react';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import Alert,{ AlertDescription } from './components/ui/alert';
 import { getRecommendations } from './services/movieService';
 import MovieList from './components/MovieList';
 import LoginForm from './components/LoginForm';

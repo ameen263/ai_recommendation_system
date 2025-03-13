@@ -9,6 +9,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 # Define the SQLite database path for persistent Q-values
 DATABASE_PATH = Path("rl_agent.db")
 
+
 class RLAgent:
     def __init__(self, learning_rate: float = 0.01, discount_factor: float = 0.9, db_path: Path = DATABASE_PATH):
         """
@@ -48,7 +49,7 @@ class RLAgent:
 
     def _load_q_values(self):
         """
-        Load Q-values from persistent storage.
+        Load Q-values from the persistent storage.
 
         Returns:
             dict: Dictionary with keys as (user_id, movie_id) and values as q_value.
@@ -67,7 +68,7 @@ class RLAgent:
 
     def _save_q_value(self, user_id: int, movie_id: int, q_value: float):
         """
-        Save or update a Q-value in persistent storage.
+        Save or update a Q-value in the persistent storage.
         """
         try:
             with self.conn:
@@ -123,20 +124,19 @@ class RLAgent:
         Args:
             user_id (int): The user's identifier.
             recommendations (list): List of tuples (movie_id, original_score).
-            feedback (dict): Dictionary mapping movie_id to a feedback reward.
+            feedback (dict): Dictionary mapping movie_id to feedback reward.
 
         Returns:
             list: Updated recommendations as tuples (movie_id, adjusted_score),
                   sorted in descending order by adjusted score.
         """
         updated_recommendations = []
-        # Compute the maximum current Q-value among the candidate recommendations
         next_max = max([self.get_q_value(user_id, movie_id) for movie_id, _ in recommendations], default=0)
         for movie_id, score in recommendations:
             reward = feedback.get(movie_id, 0)
             new_q = self.update_q_value(user_id, movie_id, reward, next_max)
             # Combine the original recommendation score with the updated Q-value.
-            # Here, we give 70% weight to the original score and 30% to the learned Q-value.
+            # Here, 70% weight is given to the original score and 30% to the learned Q-value.
             adjusted_score = 0.7 * score + 0.3 * new_q
             updated_recommendations.append((movie_id, adjusted_score))
         updated_recommendations.sort(key=lambda x: x[1], reverse=True)
@@ -154,7 +154,6 @@ if __name__ == "__main__":
     # Example usage for user_id 1 with simulated recommendations and feedback.
     agent = RLAgent(learning_rate=0.05, discount_factor=0.95)
     recommendations = [(1, 4.5), (2, 4.2), (3, 3.8)]
-    # Simulated feedback: positive feedback for movie 1, negative for movie 2, neutral for movie 3
     feedback = {1: 1, 2: -1, 3: 0}
     updated_recs = agent.adjust_recommendations(user_id=1, recommendations=recommendations, feedback=feedback)
     print("Updated Recommendations:")

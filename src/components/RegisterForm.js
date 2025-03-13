@@ -7,13 +7,12 @@ import {
   UserPlus,
   AlertCircle,
 } from 'lucide-react';
-import {
-  Card,
+import Card, {
   CardContent,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+} from './ui/Card';
+import Alert,{ AlertDescription } from './ui/alert';
 
 const RegisterForm = () => {
   const [showPassword, setShowPassword] = useState(false);
