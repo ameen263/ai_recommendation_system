@@ -2,3 +2,5 @@
 2025/03/16 13:16:08 [warn] 19692#20224: conflicting server name "localhost" on 0.0.0.0:80, ignored
 2025/03/16 14:28:06 [warn] 19256#21020: server name "http://192.168.118.1/" has suspicious symbols in C:\Users\mrabe\OneDrive\Desktop\ameen\ai_recommendation_system\nginx-1.26.3/conf/nginx.conf:37
 2025/03/16 14:28:06 [warn] 21264#6524: server name "http://192.168.118.1/" has suspicious symbols in C:\Users\mrabe\OneDrive\Desktop\ameen\ai_recommendation_system\nginx-1.26.3/conf/nginx.conf:37
+2025/03/16 14:29:17 [error] 19692#19260: *1 rewrite or internal redirection cycle while internally redirecting to "/index.html", client: 192.168.118.1, server: localhost, request: "GET / HTTP/1.1", host: "192.168.118.1"
+2025/03/16 14:29:17 [error] 19692#19260: *2 rewrite or internal redirection cycle while internally redirecting to "/index.html", client: 192.168.118.1, server: localhost, request: "GET /favicon.ico HTTP/1.1", host: "192.168.118.1", referrer: "http://192.168.118.1/"
