@@ -2,6 +2,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api import app as recommendation_app  # Recommendation API
 from auth_api import app as auth_app  # Authentication API
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.requests import Request
+
 
 # Constants
 APP_TITLE = "Unified AI Movie Recommendation API"
@@ -13,6 +17,10 @@ ALLOWED_HEADERS = ["*"]
 
 # Initialize the app
 app = FastAPI(title=APP_TITLE, version=APP_VERSION)
+
+templates = Jinja2Templates(directory="../frontend/build")
+
+app.mount('/static', StaticFiles(directory="../frontend/build/static"), 'static')
 
 
 # Middleware configuration
@@ -35,15 +43,20 @@ app.mount("/api", recommendation_app)
 app.mount("/auth", auth_app)
 
 
-# Define root endpoint
-@app.get("/")
-def get_root_endpoint():
-    """
-    Root endpoint providing basic API guidance.
-    """
-    return {
-        "message": "Welcome to the Unified API. Use /auth for authentication and /api for recommendations."
-    }
+
+# # Define root endpoint
+# @app.get("/")
+# def get_root_endpoint():
+#     """
+#     Root endpoint providing basic API guidance.
+#     """
+#     return {
+#         "message": "Welcome to the Unified API. Use /auth for authentication and /api for recommendations."
+#     }
+
+@app.get("/{rest_of_path:path}")
+async def react_app(req: Request, rest_of_path: str):
+    return templates.TemplateResponse('index.html', { 'request': req })
 
 
 # Entry point
